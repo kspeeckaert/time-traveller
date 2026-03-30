@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+
+  <!-- PWA / iOS meta ─────────────────────────────────────────────────────── -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Time Traveler" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#1c1c1e" />
+  <meta name="description" content="A world clock with time travel — view and compare time zones, past and future." />
+
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+
+  <title>Time Traveler</title>
+  <link rel="stylesheet" href="style.css" />
+
+  <!-- SortableJS 1.15.0 — classic script, must load before modules -->
+  <script
+    src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"
+    integrity="sha256-ipiJrswvAR4VAx/th+6zWsdeYmVae0iJuiR+6OqHJHQ="
+    crossorigin="anonymous"
+  ></script>
+</head>
+<body>
+<div id="app">
+
+  <!-- ── Header ───────────────────────────────────────────────────────────── -->
+  <header id="header">
+    <h1>Time Traveler <span id="version-badge"></span></h1>
+  </header>
+
+  <!-- ── Search / Add Zone Bar ─────────────────────────────────────────────── -->
+  <div id="search-bar" role="search">
+    <input
+      type="search"
+      id="zone-search"
+      placeholder="Search time zones…"
+      autocomplete="off"
+      autocorrect="off"
+      autocapitalize="off"
+      spellcheck="false"
+      aria-label="Search time zones"
+      aria-controls="zone-dropdown"
+      aria-autocomplete="list"
+    />
+    <div
+      id="zone-dropdown"
+      role="listbox"
+      aria-label="Time zone suggestions"
+      hidden
+    ></div>
+  </div>
+
+  <!-- ── Zone List ─────────────────────────────────────────────────────────── -->
+  <div id="zone-list-wrapper">
+    <div
+      id="zone-list"
+      role="listbox"
+      aria-label="Time zones"
+      aria-multiselectable="false"
+    ></div>
+  </div>
+
+  <!-- ── Footer Controls ───────────────────────────────────────────────────── -->
+  <footer id="footer">
+
+    <!-- Offset label — centred above the scroller -->
+    <div id="offset-row">
+      <span id="offset-label" aria-live="polite" aria-label="Current time offset">Now</span>
+    </div>
+
+    <!-- Scroller row: ← canvas → -->
+    <div id="scroller-row">
+      <button class="arrow-btn" id="btn-back" aria-label="Step backward in time">‹</button>
+      <canvas
+        id="scroller-canvas"
+        role="slider"
+        aria-label="Time travel scroll belt"
+        aria-valuetext="Now"
+        tabindex="0"
+      ></canvas>
+      <button class="arrow-btn" id="btn-fwd" aria-label="Step forward in time">›</button>
+    </div>
+
+    <!-- Controls bar: step size buttons + Now — centred below scroller -->
+    <div id="controls-bar" role="toolbar" aria-label="Time travel controls">
+      <div class="step-group" role="group" aria-label="Step size">
+        <button class="step-btn" data-step="1D" aria-pressed="false">1D</button>
+        <button class="step-btn" data-step="1H" aria-pressed="false">1H</button>
+        <button class="step-btn" data-step="30M" aria-pressed="false">30M</button>
+      </div>
+      <button id="btn-now" aria-label="Return to current time">Now</button>
+    </div>
+
+  </footer>
+
+</div><!-- /#app -->
+
+<script type="module" src="app.js"></script>
+
+<!-- Service Worker registration ─────────────────────────────────────────── -->
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js')
+        .catch(err => console.warn('SW registration failed:', err));
+    });
+  }
+</script>
+</body>
+</html>
