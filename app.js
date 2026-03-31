@@ -5,7 +5,7 @@ import { formatOffsetLabel, invalidateFormatterCache, resolveIana } from './time
 import { initScroller, syncBeltToOffset, pauseScroller, resumeScroller } from './scroller.js';
 import { initZones, renderZoneList, renderAllZoneRows, refreshSelection } from './zones.js';
 
-const VERSION    = '1.7.20260330';
+const VERSION    = '1.8.20260330';
 const STORAGE_KEY = 'timetraveler_v1';
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -22,11 +22,65 @@ let lastLocalIana  = '';
 
 const STEP_MS = { '1D': 86400000, '1H': 3600000, '30M': 1800000 };
 
-// All available IANA zones — computed once at startup
+// ── Zone & country search index ───────────────────────────────────────────────
+// Built once at startup from countries-and-timezones (global `ct`).
+// Falls back gracefully to Intl.supportedValuesOf if the library didn't load.
+
+// ALL_ZONES: sorted array of every known IANA zone id
 const ALL_ZONES = (() => {
   const zones = new Set(['UTC']);
-  try { Intl.supportedValuesOf('timeZone').forEach(z => zones.add(z)); } catch (_) {}
+  try {
+    if (typeof ct !== 'undefined') {
+      Object.keys(ct.getAllTimezones()).forEach(z => zones.add(z));
+    } else {
+      Intl.supportedValuesOf('timeZone').forEach(z => zones.add(z));
+    }
+  } catch (_) {
+    try { Intl.supportedValuesOf('timeZone').forEach(z => zones.add(z)); } catch (_) {}
+  }
   return [...zones].sort();
+})();
+
+// SEARCH_INDEX: Map<lowerCaseTerm, Array<{ id, subtitle }>>
+// Indexed terms: formatted zone name, country name, country code (ISO2).
+// A subtitle is shown in the dropdown when the match came via country.
+const SEARCH_INDEX = (() => {
+  const index = new Map(); // term → [{ id, subtitle }]
+
+  const add = (term, id, subtitle) => {
+    const key = term.toLowerCase();
+    if (!index.has(key)) index.set(key, []);
+    // Avoid duplicates for the same id under the same term
+    if (!index.get(key).some(e => e.id === id)) {
+      index.get(key).push({ id, subtitle });
+    }
+  };
+
+  if (typeof ct !== 'undefined') {
+    const allTZ  = ct.getAllTimezones();
+    const allC   = ct.getAllCountries();
+
+    // Index every zone by its formatted name (spaces instead of underscores)
+    Object.keys(allTZ).forEach(id => {
+      add(id.replace(/_/g, ' '), id, null);
+      // Also index each path segment separately (e.g. "Ho Chi Minh" from "Asia/Ho_Chi_Minh")
+      const city = id.split('/').pop().replace(/_/g, ' ');
+      if (city) add(city, id, null);
+    });
+
+    // Index every country name and code → its zones
+    Object.values(allC).forEach(country => {
+      (country.timezones || []).forEach(id => {
+        add(country.name, id, country.name);
+        add(country.id,   id, country.name); // ISO2 code e.g. "VN"
+      });
+    });
+  } else {
+    // Fallback: index zone IDs only
+    ALL_ZONES.forEach(id => add(id.replace(/_/g, ' '), id, null));
+  }
+
+  return index;
 })();
 
 // ── Persistence ───────────────────────────────────────────────────────────────
@@ -42,7 +96,11 @@ function loadState() {
     if (Array.isArray(parsed.zones)) {
       parsed.zones
         .filter(z => z.id !== 'local')
-        .filter(z => z.id === 'UTC' || supported.has(z.id))
+        .filter(z => {
+          if (supported.has(z.id)) return true;
+          // Accept zones that Intl can format even if not enumerated
+          try { new Intl.DateTimeFormat('en', { timeZone: z.id }); return true; } catch (_) { return false; }
+        })
         .forEach(z => zones.push({ id: z.id, ...(z.pseudonym ? { pseudonym: z.pseudonym } : {}) }));
     }
     state.zones = zones;
@@ -156,19 +214,57 @@ function initSearch() {
   if (!input || !dropdown) return;
 
   function renderDropdown(query) {
-    const q = query.toLowerCase();
+    const q = query.trim().toLowerCase();
+    if (!q) { dropdown.hidden = true; return; }
+
     const existingIds = new Set(state.zones.map(z => z.id));
-    const matches = q
-      ? ALL_ZONES.filter(z => !existingIds.has(z) && z.toLowerCase().includes(q)).slice(0, 20)
-      : [];
+
+    // Collect results: { id, subtitle } — deduplicated, existing zones excluded
+    const seen = new Set();
+    const results = [];
+
+    // Layer 1 & 2: scan search index for any term that includes the query
+    for (const [term, entries] of SEARCH_INDEX) {
+      if (!term.includes(q)) continue;
+      for (const entry of entries) {
+        if (existingIds.has(entry.id) || seen.has(entry.id)) continue;
+        seen.add(entry.id);
+        results.push(entry);
+        if (results.length >= 20) break;
+      }
+      if (results.length >= 20) break;
+    }
+
+    // Layer 3: if the raw query looks like an IANA id and wasn't found, validate with Intl
+    if (results.length === 0 && query.includes('/')) {
+      const candidate = query.trim();
+      if (!existingIds.has(candidate)) {
+        try {
+          new Intl.DateTimeFormat('en', { timeZone: candidate });
+          results.push({ id: candidate, subtitle: null });
+        } catch (_) {}
+      }
+    }
 
     dropdown.innerHTML = '';
-    if (!matches.length) { dropdown.hidden = true; return; }
+    if (!results.length) { dropdown.hidden = true; return; }
 
-    matches.forEach(id => {
+    results.forEach(({ id, subtitle }) => {
       const item = document.createElement('div');
       item.className = 'dropdown-item';
-      item.textContent = id.replace(/_/g, ' ');
+
+      const nameEl = document.createElement('span');
+      nameEl.className = 'dropdown-item-name';
+      nameEl.textContent = id.replace(/_/g, ' ');
+      item.appendChild(nameEl);
+
+      if (subtitle) {
+        const subEl = document.createElement('span');
+        subEl.className = 'dropdown-item-sub';
+        subEl.textContent = subtitle;
+        item.appendChild(subEl);
+      }
+
       item.setAttribute('role', 'option');
       item.addEventListener('mousedown', (e) => {
         e.preventDefault();
